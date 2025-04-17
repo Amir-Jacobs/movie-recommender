@@ -2,91 +2,218 @@ package main
 
 import (
 	"fmt"
-	"errors"
 	"math"
+	"sort"
 )
 
-func cosineSimilarity(user1 []int, user2 []int) (float64, error) {
-	if len(user1) != len(user2) {
-		return 0.0, errors.New("vectors must be of same length")
-	}
-
-	var dotProduct float64 = 0.0
-	var sum1 float64 = 0.0
-	var sum2 float64 = 0.0
-
-	for i := range len(user1) {
-		
-		if user1[i] == -1 {
-			continue
-		}
-
-		if user2[i] == -1 {
-			continue
-		}
-		
-		dotProduct += float64(user1[i]) * float64(user2[i])
-
-		sum1 += float64(user1[i]) * float64(user1[i])
-		sum2 += float64(user2[i]) * float64(user2[i])
-	}
-
-	magnitude := math.Sqrt(sum1) * math.Sqrt(sum2)
-
-	cosineSimilarity := dotProduct / magnitude
-
-	return cosineSimilarity, nil
+type Entity struct {
+	id   int
+	name string
 }
 
-type RecommendedRating struct {
-	index int
-	rating float64
+type Rating struct {
+	score  int
+	entity *Entity
 }
 
-func createRecommendation(user []int, otherUsers [][]int) {
-	var similarityScores []float64 = make([]float64, 0, len(otherUsers))  
+type User struct {
+	id      int
+	name    string
+	ratings []Rating
+}
 
-	for _, otherUser := range otherUsers {
-		similarityScore, _ := cosineSimilarity(user, otherUser)
+func (u User) getSimilarity(u2 User) float64 {
 
-		similarityScores = append(similarityScores, similarityScore)
+	if u.id == u2.id {
+		return 0.0
 	}
-	
-	
-	var recommendedRatings []RecommendedRating = make([]RecommendedRating, 0, 10)
 
-	for i, rating := range(user) {
-		
-		if rating != -1 {
-			continue
-		}
+	// Everyone is equally similar if they have no ratings
+	if len(u.ratings) == 0 || len(u2.ratings) == 0 {
+		return 0.5
+	}
 
-		var recommendedRating float64 = 0.0
-		var sumOfSimilarityScores float64 = 0.0
+	var dotProduct = 0.0
+	var sumRatingsUser1 = 0.0
+	var sumRatingsUser2 = 0.0
 
+	for _, ratingsUser1 := range u.ratings {
 
-		for _, otherUser := range otherUsers {
-			if otherUser[i] == -1 {
+		for _, ratingsUser2 := range u2.ratings {
+
+			// If they're not the same Entity rating, move on
+			if ratingsUser1.entity.id != ratingsUser2.entity.id {
 				continue
 			}
 
-			sumOfSimilarityScores += similarityScores[i]
-			recommendedRating += float64(otherUser[i]) * similarityScores[i]
-		}
+			dotProduct += float64(ratingsUser1.score) * float64(ratingsUser2.score)
 
-		recommendedRatings = append(recommendedRatings, RecommendedRating{index: i, rating: recommendedRating / sumOfSimilarityScores})
+			sumRatingsUser1 += float64(ratingsUser1.score) * float64(ratingsUser1.score)
+			sumRatingsUser2 += float64(ratingsUser2.score) * float64(ratingsUser2.score)
+		}
 	}
 
-	fmt.Println(recommendedRatings)
+	magnitude := math.Sqrt(sumRatingsUser1) * math.Sqrt(sumRatingsUser2)
+
+	similarityScore := dotProduct / magnitude
+
+	return similarityScore
+}
+
+func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours int) float64 {
+
+	// Consider each Entity the same if the user hasn't rated before
+	if len(u.ratings) == 0 {
+		return 0.5
+	}
+
+	// Consider each Entity the same if there's no other users to compare to
+	if len(users) == 0 {
+		return 0.5
+	}
+
+	// If the user has already rated this, return their rating
+	for _, rating := range u.ratings {
+		if rating.entity.id == entity.id {
+			return float64(rating.score)
+		}
+	}
+
+	// Filter out any users that haven't rated this Entity and filter out the current user
+	usersWithRating := make([]User, 0, len(users))
+
+	for _, otherUser := range users {
+
+		if otherUser.id == u.id {
+			continue
+		}
+
+		for _, rating := range otherUser.ratings {
+			if rating.entity.id != entity.id {
+				continue
+			}
+
+			usersWithRating = append(usersWithRating, otherUser)
+			break
+		}
+	}
+
+	if len(usersWithRating) == 0 {
+		return 0.5
+	}
+
+	// Get the similarity score for each user
+	type similarityWithUser struct {
+		user       *User
+		similarity float64
+	}
+
+	similarityScoresWithUsers := make([]similarityWithUser, 0, len(usersWithRating))
+
+	for _, userWithRating := range usersWithRating {
+		similarityScoresWithUsers = append(similarityScoresWithUsers, similarityWithUser{
+			user:       &userWithRating,
+			similarity: u.getSimilarity(userWithRating),
+		})
+	}
+
+	// Sort the similarity scores to be descending, and only use the closest neighbours for rating
+	sort.SliceStable(similarityScoresWithUsers, func(i, j int) bool {
+		return similarityScoresWithUsers[i].similarity > similarityScoresWithUsers[j].similarity
+	})
+
+	if len(similarityScoresWithUsers) < amountOfNeighbours {
+		amountOfNeighbours = len(similarityScoresWithUsers)
+	}
+
+	closestNeighbours := similarityScoresWithUsers[:amountOfNeighbours]
+
+	recommendedRating := 0.0
+	sumOfSimilarityScores := 0.0
+
+	for _, neighbour := range closestNeighbours {
+		sumOfSimilarityScores += neighbour.similarity
+
+		for _, rating := range neighbour.user.ratings {
+			if rating.entity.id != entity.id {
+				continue
+			}
+
+			recommendedRating += float64(rating.score) * neighbour.similarity
+			break
+		}
+	}
+
+	recommendedRating = recommendedRating / sumOfSimilarityScores
+
+	return recommendedRating
 }
 
 func main() {
-	ratings := [][]int{
-		{5, 1, 4, -1},
-		{4, 1, 5, 1},
-		{1, 5, 1, 4},
+	amountOfNeighbours := 1
+
+	entities := []Entity{
+		{1, "Bombastic side-eye"},
+		{2, "Banana bus"},
+		{3, "Farting4Fortnite"},
 	}
 
-	createRecommendation(ratings[0], [][]int{ratings[1], ratings[2]})
-} 
+	users := make([]User, 0, 10)
 
+	users = append(users, User{
+		id:   1,
+		name: "Jennifer",
+		ratings: []Rating{
+			{
+				score:  1,
+				entity: &entities[0],
+			},
+			{
+				score:  5,
+				entity: &entities[1],
+			},
+			{
+				score:  2,
+				entity: &entities[2],
+			},
+		},
+	})
+
+	users = append(users, User{
+		id:   2,
+		name: "Maghba",
+		ratings: []Rating{
+			{
+				score:  5,
+				entity: &entities[0],
+			},
+			{
+				score:  1,
+				entity: &entities[1],
+			},
+			{
+				score:  4,
+				entity: &entities[2],
+			},
+		},
+	})
+
+	users = append(users, User{
+		id:   3,
+		name: "Bennifer",
+		ratings: []Rating{
+			{
+				score:  2,
+				entity: &entities[0],
+			},
+			{
+				score:  5,
+				entity: &entities[1],
+			},
+		},
+	})
+
+	recommendedRating := users[2].getPredictedScore(entities[2], users, amountOfNeighbours)
+
+	fmt.Println(recommendedRating)
+}
