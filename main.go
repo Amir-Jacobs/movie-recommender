@@ -1,219 +1,160 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
-	"math"
-	"sort"
+	"io"
+	"log"
+	"os"
+	"strconv"
+	"time"
 )
 
-type Entity struct {
-	id   int
-	name string
-}
+func extractMovies() map[int64]Entity {
+	f, err := os.Open("data/movies.csv")
 
-type Rating struct {
-	score  int
-	entity *Entity
-}
-
-type User struct {
-	id      int
-	name    string
-	ratings []Rating
-}
-
-func (u User) getSimilarity(u2 User) float64 {
-
-	if u.id == u2.id {
-		return 0.0
+	if err != nil {
+		log.Fatal("Unable to read input file ", err)
 	}
 
-	// Everyone is equally similar if they have no ratings
-	if len(u.ratings) == 0 || len(u2.ratings) == 0 {
-		return 0.5
-	}
+	defer f.Close()
 
-	var dotProduct = 0.0
-	var sumRatingsUser1 = 0.0
-	var sumRatingsUser2 = 0.0
+	csvReader := csv.NewReader(f)
+	movies := make(map[int64]Entity)
 
-	for _, ratingsUser1 := range u.ratings {
+	for {
+		record, err := csvReader.Read()
 
-		for _, ratingsUser2 := range u2.ratings {
-
-			// If they're not the same Entity rating, move on
-			if ratingsUser1.entity.id != ratingsUser2.entity.id {
-				continue
-			}
-
-			dotProduct += float64(ratingsUser1.score) * float64(ratingsUser2.score)
-
-			sumRatingsUser1 += float64(ratingsUser1.score) * float64(ratingsUser1.score)
-			sumRatingsUser2 += float64(ratingsUser2.score) * float64(ratingsUser2.score)
+		if err == io.EOF {
+			break
 		}
-	}
 
-	magnitude := math.Sqrt(sumRatingsUser1) * math.Sqrt(sumRatingsUser2)
-
-	similarityScore := dotProduct / magnitude
-
-	return similarityScore
-}
-
-func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours int) float64 {
-
-	// Consider each Entity the same if the user hasn't rated before
-	if len(u.ratings) == 0 {
-		return 0.5
-	}
-
-	// Consider each Entity the same if there's no other users to compare to
-	if len(users) == 0 {
-		return 0.5
-	}
-
-	// If the user has already rated this, return their rating
-	for _, rating := range u.ratings {
-		if rating.entity.id == entity.id {
-			return float64(rating.score)
-		}
-	}
-
-	// Filter out any users that haven't rated this Entity and filter out the current user
-	usersWithRating := make([]User, 0, len(users))
-
-	for _, otherUser := range users {
-
-		if otherUser.id == u.id {
+		if err != nil {
+			fmt.Println("Unable to read line")
 			continue
 		}
 
-		for _, rating := range otherUser.ratings {
-			if rating.entity.id != entity.id {
-				continue
-			}
+		movieId, err := strconv.ParseInt(record[0], 10, 64)
 
-			usersWithRating = append(usersWithRating, otherUser)
-			break
+		if err != nil {
+			continue
+		}
+
+		movies[movieId] = Entity{
+			id:   movieId,
+			name: record[1],
 		}
 	}
 
-	if len(usersWithRating) == 0 {
-		return 0.5
+	return movies
+}
+
+func extractRatings(maxUsers int, uniqueMovies map[int64]Entity) map[int64]*User {
+	f, err := os.Open("data/ratings.csv")
+
+	if err != nil {
+		log.Fatal("Unable to read input file ", err)
 	}
 
-	// Get the similarity score for each user
-	type similarityWithUser struct {
-		user       *User
-		similarity float64
-	}
+	defer f.Close()
 
-	similarityScoresWithUsers := make([]similarityWithUser, 0, len(usersWithRating))
+	csvReader := csv.NewReader(f)
 
-	for _, userWithRating := range usersWithRating {
-		similarityScoresWithUsers = append(similarityScoresWithUsers, similarityWithUser{
-			user:       &userWithRating,
-			similarity: u.getSimilarity(userWithRating),
+	uniqueUsersWithRatings := make(map[int64]*User)
+
+	for {
+		record, err := csvReader.Read()
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			fmt.Println("Unable to read line")
+			continue
+		}
+
+		userId, err := strconv.ParseInt(record[0], 10, 64)
+
+		if err != nil {
+			continue
+		}
+
+		movieId, err := strconv.ParseInt(record[1], 10, 64)
+
+		if err != nil {
+			continue
+		}
+
+		// If movie doesn't exist don't include the rating
+		movie := uniqueMovies[movieId]
+
+		if movie.id == 0 {
+			continue
+		}
+
+		rating, err := strconv.ParseFloat(record[2], 64)
+
+		if err != nil {
+			continue
+		}
+
+		// If max users is reached, don't add new ones
+		if uniqueUsersWithRatings[userId] == nil && len(uniqueUsersWithRatings) >= maxUsers {
+
+			// Am able to do this because the CSV is sorted by userId
+			break
+		}
+
+		// If user didn't exist yet
+		if uniqueUsersWithRatings[userId] == nil {
+			uniqueUsersWithRatings[userId] = &User{
+				id: userId,
+				ratings: []Rating{
+					{
+						score:  rating,
+						entity: &movie,
+					},
+				},
+			}
+
+			continue
+		}
+
+		uniqueUsersWithRatings[userId].ratings = append(uniqueUsersWithRatings[userId].ratings, Rating{
+			score:  rating,
+			entity: &movie,
 		})
 	}
 
-	// Sort the similarity scores to be descending, and only use the closest neighbours for rating
-	sort.SliceStable(similarityScoresWithUsers, func(i, j int) bool {
-		return similarityScoresWithUsers[i].similarity > similarityScoresWithUsers[j].similarity
-	})
-
-	if len(similarityScoresWithUsers) < amountOfNeighbours {
-		amountOfNeighbours = len(similarityScoresWithUsers)
-	}
-
-	closestNeighbours := similarityScoresWithUsers[:amountOfNeighbours]
-
-	recommendedRating := 0.0
-	sumOfSimilarityScores := 0.0
-
-	for _, neighbour := range closestNeighbours {
-		sumOfSimilarityScores += neighbour.similarity
-
-		for _, rating := range neighbour.user.ratings {
-			if rating.entity.id != entity.id {
-				continue
-			}
-
-			recommendedRating += float64(rating.score) * neighbour.similarity
-			break
-		}
-	}
-
-	recommendedRating = recommendedRating / sumOfSimilarityScores
-
-	return recommendedRating
+	return uniqueUsersWithRatings
 }
 
 func main() {
-	amountOfNeighbours := 1
+	start := time.Now()
 
-	entities := []Entity{
-		{1, "Bombastic side-eye"},
-		{2, "Banana bus"},
-		{3, "Farting4Fortnite"},
+	movies := extractMovies()
+
+	users := extractRatings(10_000, movies)
+
+	elapsed := time.Since(start)
+
+	fmt.Printf("Function took %s \n", elapsed)
+	fmt.Printf("Amount of users: %d \n", len(users))
+
+	usersList := make([]User, 0, len(users))
+
+	for _, user := range users {
+		usersList = append(usersList, *user)
 	}
 
-	users := make([]User, 0, 10)
+	for _, user := range users {
+		for _, movie := range movies {
+			predictedScore := user.getPredictedScore(movie, usersList, 3)
 
-	users = append(users, User{
-		id:   1,
-		name: "Jennifer",
-		ratings: []Rating{
-			{
-				score:  1,
-				entity: &entities[0],
-			},
-			{
-				score:  5,
-				entity: &entities[1],
-			},
-			{
-				score:  2,
-				entity: &entities[2],
-			},
-		},
-	})
+			fmt.Println(predictedScore)
+		}
 
-	users = append(users, User{
-		id:   2,
-		name: "Maghba",
-		ratings: []Rating{
-			{
-				score:  5,
-				entity: &entities[0],
-			},
-			{
-				score:  1,
-				entity: &entities[1],
-			},
-			{
-				score:  4,
-				entity: &entities[2],
-			},
-		},
-	})
-
-	users = append(users, User{
-		id:   3,
-		name: "Bennifer",
-		ratings: []Rating{
-			{
-				score:  2,
-				entity: &entities[0],
-			},
-			{
-				score:  5,
-				entity: &entities[1],
-			},
-		},
-	})
-
-	recommendedRating := users[2].getPredictedScore(entities[2], users, amountOfNeighbours)
-
-	fmt.Println(recommendedRating)
+		break
+	}
 }
