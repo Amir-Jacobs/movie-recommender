@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"math"
 	"sort"
 )
@@ -11,15 +10,9 @@ type Entity struct {
 	name string
 }
 
-type Rating struct {
-	score  float64
-	entity *Entity
-}
-
 type User struct {
 	id      int64
-	name    string
-	ratings []Rating
+	ratings map[int64]float64 // uses the id of the Entity!
 }
 
 func (u User) getSimilarity(u2 User) float64 {
@@ -33,40 +26,40 @@ func (u User) getSimilarity(u2 User) float64 {
 		return 0.5
 	}
 
+	// If the users don't share ratings, don't calculate anything; they're not similar
+	sharedRatings := make([]int64, 0, len(u.ratings))
+
+	for movieId, _ := range u.ratings {
+		if u2.ratings[movieId] == 0 {
+			continue
+		}
+
+		sharedRatings = append(sharedRatings, movieId)
+		break
+	}
+
+	if len(sharedRatings) == 0 {
+		return 0.01
+	}
+
 	var dotProduct = 0.0
 	var sumRatingsUser1 = 0.0
 	var sumRatingsUser2 = 0.0
 
-	var usersShareRatings bool
+	for id := range sharedRatings {
+		dotProduct += u.ratings[int64(id)] * u2.ratings[int64(id)]
 
-	for _, ratingsUser1 := range u.ratings {
-
-		for _, ratingsUser2 := range u2.ratings {
-
-			// If they're not the same Entity rating, move on
-			if ratingsUser1.entity.id != ratingsUser2.entity.id {
-				continue
-			}
-
-			usersShareRatings = true
-
-			dotProduct += ratingsUser1.score * ratingsUser2.score
-
-			sumRatingsUser1 += ratingsUser1.score * ratingsUser1.score
-			sumRatingsUser2 += ratingsUser2.score * ratingsUser2.score
-		}
-	}
-
-	if !usersShareRatings {
-		return 0.01
+		sumRatingsUser1 += u.ratings[int64(id)] * u.ratings[int64(id)]
+		sumRatingsUser2 += u2.ratings[int64(id)] * u2.ratings[int64(id)]
 	}
 
 	magnitude := math.Sqrt(sumRatingsUser1) * math.Sqrt(sumRatingsUser2)
 
 	similarityScore := dotProduct / magnitude
 
+	// todo: figure out how this becomes NaN
 	if math.IsNaN(similarityScore) {
-		log.Fatal("\n", u.ratings, "\n", u2.ratings)
+		return 0.01
 	}
 
 	return similarityScore
@@ -85,10 +78,8 @@ func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours 
 	}
 
 	// If the user has already rated this, return their rating
-	for _, rating := range u.ratings {
-		if rating.entity.id == entity.id {
-			return rating.score
-		}
+	if u.ratings[entity.id] != 0 {
+		return u.ratings[entity.id]
 	}
 
 	// Filter out any users that haven't rated this Entity and filter out the current user
@@ -96,18 +87,17 @@ func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours 
 
 	for _, otherUser := range users {
 
+		// Filter out current user
 		if otherUser.id == u.id {
 			continue
 		}
 
-		for _, rating := range otherUser.ratings {
-			if rating.entity.id != entity.id {
-				continue
-			}
-
-			usersWithRating = append(usersWithRating, otherUser)
-			break
+		// Filter out user without rating for Entity
+		if otherUser.ratings[entity.id] == 0 {
+			continue
 		}
+
+		usersWithRating = append(usersWithRating, otherUser)
 	}
 
 	// If there's no Users that ranked this Entity
@@ -147,14 +137,7 @@ func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours 
 	for _, neighbour := range closestNeighbours {
 		sumOfSimilarityScores += neighbour.similarity
 
-		for _, rating := range neighbour.user.ratings {
-			if rating.entity.id != entity.id {
-				continue
-			}
-
-			recommendedRating += rating.score * neighbour.similarity
-			break
-		}
+		recommendedRating += neighbour.user.ratings[entity.id] * neighbour.similarity
 	}
 
 	recommendedRating = recommendedRating / sumOfSimilarityScores

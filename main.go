@@ -49,7 +49,7 @@ func extractMovies() map[int64]Entity {
 	return movies
 }
 
-func extractRatings(maxUsers int, uniqueMovies map[int64]Entity) map[int64]*User {
+func extractRatings(maxUsers int, uniqueMovies map[int64]Entity, minRating float64, maxRating float64) map[int64]*User {
 	f, err := os.Open("data/ratings.csv")
 
 	if err != nil {
@@ -99,6 +99,10 @@ func extractRatings(maxUsers int, uniqueMovies map[int64]Entity) map[int64]*User
 			continue
 		}
 
+		if rating < minRating || rating > maxRating {
+			continue
+		}
+
 		// If max users is reached, don't add new ones
 		if uniqueUsersWithRatings[userId] == nil && len(uniqueUsersWithRatings) >= maxUsers {
 
@@ -108,23 +112,19 @@ func extractRatings(maxUsers int, uniqueMovies map[int64]Entity) map[int64]*User
 
 		// If user didn't exist yet
 		if uniqueUsersWithRatings[userId] == nil {
+			ratings := make(map[int64]float64)
+
+			ratings[movieId] = rating
+
 			uniqueUsersWithRatings[userId] = &User{
-				id: userId,
-				ratings: []Rating{
-					{
-						score:  rating,
-						entity: &movie,
-					},
-				},
+				id:      userId,
+				ratings: ratings,
 			}
 
 			continue
 		}
 
-		uniqueUsersWithRatings[userId].ratings = append(uniqueUsersWithRatings[userId].ratings, Rating{
-			score:  rating,
-			entity: &movie,
-		})
+		uniqueUsersWithRatings[userId].ratings[movieId] = rating
 	}
 
 	return uniqueUsersWithRatings
@@ -135,7 +135,7 @@ func main() {
 
 	movies := extractMovies()
 
-	users := extractRatings(10_000, movies)
+	users := extractRatings(1000, movies, 1.0, 5.0)
 
 	elapsed := time.Since(start)
 
@@ -148,11 +148,41 @@ func main() {
 		usersList = append(usersList, *user)
 	}
 
-	for _, user := range users {
-		for _, movie := range movies {
-			predictedScore := user.getPredictedScore(movie, usersList, 3)
+	start = time.Now()
 
-			fmt.Println(predictedScore)
+	predictionsForUser := make(map[int64]map[int64]float64)
+
+	for _, user := range users {
+		index := 0
+
+		predictionsForUser[user.id] = make(map[int64]float64)
+
+		for _, movie := range movies {
+			predictionsForUser[user.id][movie.id] = user.getPredictedScore(movie, usersList, 10)
+
+			index += 1
+
+			if index == 150 {
+				break
+			}
+		}
+	}
+
+	elapsed = time.Since(start)
+
+	fmt.Printf("Function took %s \n", elapsed)
+	fmt.Println("Predictions done for amount of users: ", len(predictionsForUser))
+
+	for id, predictions := range predictionsForUser {
+		fmt.Printf("Predictions for user with id %d are:\n", id)
+
+		for movieId, prediction := range predictions {
+			if prediction < 4.0 {
+				continue
+			}
+
+			fmt.Printf("Movie name: %s\n", movies[movieId].name)
+			fmt.Printf("Predicted score: %.2f\n", prediction)
 		}
 
 		break
