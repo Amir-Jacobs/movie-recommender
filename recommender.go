@@ -65,7 +65,11 @@ func (u User) getSimilarity(u2 User) float64 {
 	return similarityScore
 }
 
-func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours int) float64 {
+func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours int, minimumSimilarityThreshold float64) float64 {
+
+	if amountOfNeighbours == 0 {
+		return 0.01
+	}
 
 	// Consider each Entity the same if the user hasn't rated before
 	if len(u.ratings) == 0 {
@@ -112,12 +116,25 @@ func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours 
 	}
 
 	similarityScoresWithUsers := make([]similarityWithUser, 0, len(usersWithRating))
+	minimumSimilarityUsers := 0
 
 	for _, userWithRating := range usersWithRating {
+		similarity := u.getSimilarity(userWithRating)
+
 		similarityScoresWithUsers = append(similarityScoresWithUsers, similarityWithUser{
 			user:       &userWithRating,
-			similarity: u.getSimilarity(userWithRating),
+			similarity: similarity,
 		})
+
+		// Count the amount of users that reached minimum similarity threshold
+		if minimumSimilarityThreshold >= similarity {
+			minimumSimilarityUsers += 1
+		}
+
+		// Once enough users did, stop comparing for more
+		if amountOfNeighbours == minimumSimilarityUsers {
+			break
+		}
 	}
 
 	// Sort the similarity scores to be descending, and only use the closest neighbours for rating

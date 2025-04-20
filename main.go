@@ -131,11 +131,21 @@ func extractRatings(maxUsers int, uniqueMovies map[int64]Entity, minRating float
 }
 
 func main() {
+	amountOfNeighbours := 100_000
+	minimumSimilarityThreshold := 0.02
+	amountOfUsers := 100_000
+
+	minRating := 1.0
+	maxRating := 5.0
+
+	amountOfRecommendedEntities := 50
+	minimumRatingForRecommendation := 4.5
+
 	start := time.Now()
 
 	movies := extractMovies()
 
-	users := extractRatings(1000, movies, 1.0, 5.0)
+	users := extractRatings(amountOfUsers, movies, minRating, maxRating)
 
 	elapsed := time.Since(start)
 
@@ -148,43 +158,84 @@ func main() {
 		usersList = append(usersList, *user)
 	}
 
-	start = time.Now()
+	//	start = time.Now()
+	//
+	//	predictionsForUser := make(map[int64]map[int64]float64)
+	//
+	//recommend:
+	//	for _, user := range users {
+	//		predictionsForUser[user.id] = make(map[int64]float64)
+	//
+	//		for _, movie := range movies {
+	//			predictedScore := user.getPredictedScore(movie, usersList, amountOfNeighbours, minimumSimilarityThreshold)
+	//
+	//			if predictedScore < minimumRatingForRecommendation {
+	//				continue
+	//			}
+	//
+	//			predictionsForUser[user.id][movie.id] = predictedScore
+	//
+	//			if len(predictionsForUser[user.id]) >= amountOfRecommendedEntities {
+	//				continue recommend
+	//			}
+	//		}
+	//	}
+	//
+	//	elapsed = time.Since(start)
+	//
+	//	fmt.Printf("Function took %s \n", elapsed)
+	//	fmt.Println("Predictions done for amount of users: ", len(predictionsForUser))
+	//
+	//	for id, predictions := range predictionsForUser {
+	//		fmt.Printf("Predictions for user with id %d are:\n", id)
+	//
+	//		for movieId, prediction := range predictions {
+	//			fmt.Printf("Movie name: %s\n", movies[movieId].name)
+	//			fmt.Printf("Predicted score: %.2f\n", prediction)
+	//		}
+	//
+	//		fmt.Println("")
+	//		fmt.Println("")
+	//	}
+
+	myRatings := make(map[int64]float64)
+
+	myRatings[8368] = 5.0
+	myRatings[40815] = 5.0
+	myRatings[55768] = 5.0
+
+	amir := User{
+		id:      200000,
+		ratings: myRatings,
+	}
 
 	predictionsForUser := make(map[int64]map[int64]float64)
 
-	for _, user := range users {
-		index := 0
+	predictionsForUser[amir.id] = make(map[int64]float64)
 
-		predictionsForUser[user.id] = make(map[int64]float64)
+	for _, movie := range movies {
+		predictedScore := amir.getPredictedScore(movie, usersList, amountOfNeighbours, minimumSimilarityThreshold)
 
-		for _, movie := range movies {
-			predictionsForUser[user.id][movie.id] = user.getPredictedScore(movie, usersList, 10)
+		if predictedScore < minimumRatingForRecommendation {
+			continue
+		}
 
-			index += 1
+		predictionsForUser[amir.id][movie.id] = predictedScore
 
-			if index == 150 {
-				break
-			}
+		if len(predictionsForUser[amir.id]) >= amountOfRecommendedEntities {
+			break
 		}
 	}
-
-	elapsed = time.Since(start)
-
-	fmt.Printf("Function took %s \n", elapsed)
-	fmt.Println("Predictions done for amount of users: ", len(predictionsForUser))
 
 	for id, predictions := range predictionsForUser {
 		fmt.Printf("Predictions for user with id %d are:\n", id)
 
 		for movieId, prediction := range predictions {
-			if prediction < 4.0 {
-				continue
-			}
-
 			fmt.Printf("Movie name: %s\n", movies[movieId].name)
 			fmt.Printf("Predicted score: %.2f\n", prediction)
 		}
 
-		break
+		fmt.Println("")
+		fmt.Println("")
 	}
 }
