@@ -15,6 +15,17 @@ type User struct {
 	ratings map[int64]float64 // uses the id of the Entity!
 }
 
+func (u User) averageRating() float64 {
+	if len(u.ratings) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, r := range u.ratings {
+		sum += r
+	}
+	return sum / float64(len(u.ratings))
+}
+
 func (u User) getSimilarity(u2 User) float64 {
 
 	if u.id == u2.id {
@@ -29,13 +40,12 @@ func (u User) getSimilarity(u2 User) float64 {
 	// If the users don't share ratings, don't calculate anything; they're not similar
 	sharedRatings := make([]int64, 0, len(u.ratings))
 
-	for movieId, _ := range u.ratings {
-		if u2.ratings[movieId] == 0 {
+	for movieId := range u.ratings {
+		if _, ok := u2.ratings[movieId]; !ok {
 			continue
 		}
 
 		sharedRatings = append(sharedRatings, movieId)
-		break
 	}
 
 	if len(sharedRatings) == 0 {
@@ -46,11 +56,11 @@ func (u User) getSimilarity(u2 User) float64 {
 	var sumRatingsUser1 = 0.0
 	var sumRatingsUser2 = 0.0
 
-	for id := range sharedRatings {
-		dotProduct += u.ratings[int64(id)] * u2.ratings[int64(id)]
+	for _, movieId := range sharedRatings {
+		dotProduct += u.ratings[movieId] * u2.ratings[movieId]
 
-		sumRatingsUser1 += u.ratings[int64(id)] * u.ratings[int64(id)]
-		sumRatingsUser2 += u2.ratings[int64(id)] * u2.ratings[int64(id)]
+		sumRatingsUser1 += u.ratings[movieId] * u.ratings[movieId]
+		sumRatingsUser2 += u2.ratings[movieId] * u2.ratings[movieId]
 	}
 
 	magnitude := math.Sqrt(sumRatingsUser1) * math.Sqrt(sumRatingsUser2)
@@ -71,19 +81,30 @@ func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours 
 		return 0.01
 	}
 
-	// Consider each Entity the same if the user hasn't rated before
+	// If the user hasn't rated before, use the average rating from other users
 	if len(u.ratings) == 0 {
-		return 2.5
+		sum := 0.0
+		count := 0
+		for _, other := range users {
+			if r, ok := other.ratings[entity.id]; ok {
+				sum += r
+				count++
+			}
+		}
+		if count == 0 {
+			return 0
+		}
+		return sum / float64(count)
 	}
 
 	// Consider each Entity the same if there's no other users to compare to
 	if len(users) == 0 {
-		return 2.5
+		return u.averageRating()
 	}
 
 	// If the user has already rated this, return their rating
-	if u.ratings[entity.id] != 0 {
-		return u.ratings[entity.id]
+	if rating, ok := u.ratings[entity.id]; ok {
+		return rating
 	}
 
 	// Filter out any users that haven't rated this Entity and filter out the current user
@@ -97,7 +118,7 @@ func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours 
 		}
 
 		// Filter out user without rating for Entity
-		if otherUser.ratings[entity.id] == 0 {
+		if _, ok := otherUser.ratings[entity.id]; !ok {
 			continue
 		}
 
@@ -106,7 +127,7 @@ func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours 
 
 	// If there's no Users that ranked this Entity
 	if len(usersWithRating) == 0 {
-		return 2.5
+		return u.averageRating()
 	}
 
 	// Get the similarity score for each user
@@ -127,7 +148,7 @@ func (u User) getPredictedScore(entity Entity, users []User, amountOfNeighbours 
 		})
 
 		// Count the amount of users that reached minimum similarity threshold
-		if minimumSimilarityThreshold >= similarity {
+		if similarity >= minimumSimilarityThreshold {
 			minimumSimilarityUsers += 1
 		}
 
